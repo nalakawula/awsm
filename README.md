@@ -30,6 +30,7 @@ Usage:
   awsm add [-type sm|ps] -name NAME -value VALUE    Add a new secret
   awsm update [-type sm|ps] -name NAME -value VALUE Update an existing secret
   awsm delete [-type sm|ps] -name NAME              Delete a secret
+  awsm get [-type sm|ps] -name NAME [-format json|raw] Get a secret's value
   awsm list [-type sm|ps]                           List all secrets
   awsm run [-type sm|ps] -name NAME -- COMMAND [ARGS...]    Run a command with secrets as env vars
   awsm help                                         Show this help message
@@ -38,6 +39,7 @@ Options:
   -type    Service type: sm (Secrets Manager, default) or ps (Parameter Store)
   -name    Secret name
   -value   Secret value (string, JSON, key-value pairs like "key1=val1,key2=val2", or @file to read from file)
+  -format  Output format for get command: json (default, pretty-prints JSON) or raw (plain text)
   
 Notes:
   - When updating JSON secrets, existing keys will be updated and new keys will be appended automatically
@@ -85,6 +87,21 @@ awsm list
 
 ```bash
 awsm list -type ps
+```
+
+### Get a secret from Secrets Manager (default)
+```bash
+awsm get -name my-secret
+```
+
+### Get a secret from Parameter Store
+```bash
+awsm get -type ps -name my-secret
+```
+
+### Get a secret with raw output (no pretty printing)
+```bash
+awsm get -name my-secret -format raw
 ```
 
 ### Run an application with secrets as environment variables

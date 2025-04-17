@@ -89,8 +89,8 @@ func printUsage() {
 	fmt.Print(`AWS Secret Manager Tool (awsm)
 
 Usage:
-  awsm add [-type sm|ps] -name NAME -value VALUE    Add a new secret
-  awsm update [-type sm|ps] -name NAME -value VALUE Update an existing secret
+  awsm add [-type sm|ps] -name NAME -value VALUE [-desc DESCRIPTION]    Add a new secret
+  awsm update [-type sm|ps] -name NAME -value VALUE [-desc DESCRIPTION] Update an existing secret
   awsm delete [-type sm|ps] -name NAME              Delete a secret
   awsm get [-type sm|ps] -name NAME [-format json|raw] Get a secret's value
   awsm list [-type sm|ps]                           List all secrets
@@ -102,6 +102,7 @@ Options:
   -name    Secret name
   -value   Secret value (string, JSON, key-value pairs like "key1=val1,key2=val2", or @file to read from file)
   -format  Output format for get command: json (default, pretty-prints JSON) or raw (plain text)
+  -desc    Description for the secret or parameter (optional)
   
 Notes:
   - When updating JSON secrets, existing keys will be updated and new keys will be appended automatically
@@ -188,6 +189,7 @@ func (c *AWSMClient) addSecret(args []string) error {
 	serviceType := cmdFlags.String("type", serviceTypeSecretsManager, "Service type: sm (Secrets Manager) or ps (Parameter Store)")
 	name := cmdFlags.String("name", "", "Secret name")
 	value := cmdFlags.String("value", "", "Secret value")
+	description := cmdFlags.String("desc", "", "Secret description")
 
 	if err := cmdFlags.Parse(args); err != nil {
 		return err
@@ -223,12 +225,19 @@ func (c *AWSMClient) addSecret(args []string) error {
 			return fmt.Errorf("parameter '%s' already exists in Parameter Store. Use update command to modify it", *name)
 		}
 
-		_, err = c.psClient.PutParameter(ctx, &ssm.PutParameterInput{
+		paramInput := &ssm.PutParameterInput{
 			Name:      name,
 			Value:     value,
 			Type:      ssmtypes.ParameterTypeSecureString,
 			Overwrite: aws.Bool(false),
-		})
+		}
+
+		// Add description if provided
+		if *description != "" {
+			paramInput.Description = description
+		}
+
+		_, err = c.psClient.PutParameter(ctx, paramInput)
 		if err != nil {
 			return fmt.Errorf("failed to save parameter: %w", err)
 		}
@@ -246,10 +255,17 @@ func (c *AWSMClient) addSecret(args []string) error {
 			return fmt.Errorf("secret '%s' already exists in Secrets Manager. Use update command to modify it", *name)
 		}
 
-		_, err = c.smClient.CreateSecret(ctx, &secretsmanager.CreateSecretInput{
+		secretInput := &secretsmanager.CreateSecretInput{
 			Name:         name,
 			SecretString: value,
-		})
+		}
+
+		// Add description if provided
+		if *description != "" {
+			secretInput.Description = description
+		}
+
+		_, err = c.smClient.CreateSecret(ctx, secretInput)
 		if err != nil {
 			return fmt.Errorf("failed to create secret: %w", err)
 		}
@@ -269,6 +285,7 @@ func (c *AWSMClient) updateSecret(args []string) error {
 	serviceType := cmdFlags.String("type", serviceTypeSecretsManager, "Service type: sm (Secrets Manager) or ps (Parameter Store)")
 	name := cmdFlags.String("name", "", "Secret name")
 	value := cmdFlags.String("value", "", "Secret value")
+	description := cmdFlags.String("desc", "", "Secret description")
 
 	if err := cmdFlags.Parse(args); err != nil {
 		return err
@@ -360,12 +377,19 @@ func (c *AWSMClient) updateSecret(args []string) error {
 			return fmt.Errorf("parameter '%s' does not exist in Parameter Store", *name)
 		}
 
-		_, err := c.psClient.PutParameter(ctx, &ssm.PutParameterInput{
+		paramInput := &ssm.PutParameterInput{
 			Name:      name,
 			Value:     value,
 			Type:      ssmtypes.ParameterTypeSecureString,
 			Overwrite: aws.Bool(true),
-		})
+		}
+
+		// Add description if provided
+		if *description != "" {
+			paramInput.Description = description
+		}
+
+		_, err := c.psClient.PutParameter(ctx, paramInput)
 		if err != nil {
 			return fmt.Errorf("failed to update parameter: %w", err)
 		}
@@ -380,10 +404,17 @@ func (c *AWSMClient) updateSecret(args []string) error {
 			return fmt.Errorf("secret '%s' does not exist in Secrets Manager", *name)
 		}
 
-		_, err = c.smClient.UpdateSecret(ctx, &secretsmanager.UpdateSecretInput{
+		updateInput := &secretsmanager.UpdateSecretInput{
 			SecretId:     name,
 			SecretString: value,
-		})
+		}
+
+		// Add description if provided
+		if *description != "" {
+			updateInput.Description = description
+		}
+
+		_, err = c.smClient.UpdateSecret(ctx, updateInput)
 		if err != nil {
 			return fmt.Errorf("failed to update secret: %w", err)
 		}

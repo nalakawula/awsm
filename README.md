@@ -13,7 +13,13 @@ A command-line tool for managing AWS Secrets and injecting them as environment v
   - Plain text values
   - JSON objects
   - Key-value pairs (key1=value1,key2=value2)
-  - File contents (using @file syntax)
+  - File contents (JSON orn .env using @file syntax)
+
+## Use Case
+
+This tool is designed to securely store `.env` files in AWS Secrets Manager or AWS SSM Parameter Store. These secrets can then be seamlessly injected into applications using the `awsm run -name foo -type ps -- node server.js` command.
+
+Additionally, the `-value` argument supports `.env` files, allowing you to easily import them. For example: `awsm add -name foo -type ps -value @/path/to/.env`.
 
 ## Installation
 

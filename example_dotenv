@@ -1,0 +1,5 @@
+USERNAME="foo"
+PASSWORD="bar"
+API_KEY="abc123def456"
+ENDPOINT="https://api.example.com"
+ENVIRONMENT="production"

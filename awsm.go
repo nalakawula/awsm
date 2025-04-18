@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
+	"golang.org/x/exp/maps"
 )
 
 const (
@@ -134,8 +135,7 @@ func parseValueAsJSON(value string) (string, bool, error) {
 
 		// Handle multiple key=value pairs
 		if strings.Contains(value, ",") {
-			pairs := strings.Split(value, ",")
-			for _, pair := range pairs {
+			for _, pair := range strings.Split(value, ",") {
 				pair = strings.TrimSpace(pair)
 				if pair == "" {
 					continue
@@ -172,10 +172,15 @@ func parseValueAsJSON(value string) (string, bool, error) {
 func validateSize(value string, serviceType string) error {
 	valueSize := len([]byte(value))
 
-	if serviceType == serviceTypeParameterStore && valueSize > parameterStoreSizeLimit {
-		return fmt.Errorf("parameter store value exceeds the 4KB limit (current size: %d bytes)", valueSize)
-	} else if serviceType == serviceTypeSecretsManager && valueSize > secretManagerSizeLimit {
-		return fmt.Errorf("secrets manager value exceeds the 64KB limit (current size: %d bytes)", valueSize)
+	switch serviceType {
+	case serviceTypeParameterStore:
+		if valueSize > parameterStoreSizeLimit {
+			return fmt.Errorf("parameter store value exceeds the 4KB limit (current size: %d bytes)", valueSize)
+		}
+	case serviceTypeSecretsManager:
+		if valueSize > secretManagerSizeLimit {
+			return fmt.Errorf("secrets manager value exceeds the 64KB limit (current size: %d bytes)", valueSize)
+		}
 	}
 
 	return nil
@@ -183,7 +188,8 @@ func validateSize(value string, serviceType string) error {
 
 // getExistingSecret retrieves an existing secret from either Secrets Manager or Parameter Store
 func (c *AWSMClient) getExistingSecret(name string, serviceType string) (string, bool, error) {
-	if serviceType == serviceTypeParameterStore {
+	switch serviceType {
+	case serviceTypeParameterStore:
 		output, err := c.psClient.GetParameter(c.ctx, &ssm.GetParameterInput{
 			Name:           &name,
 			WithDecryption: aws.Bool(true),
@@ -192,7 +198,7 @@ func (c *AWSMClient) getExistingSecret(name string, serviceType string) (string,
 			return "", false, err
 		}
 		return *output.Parameter.Value, true, nil
-	} else {
+	default: // serviceTypeSecretsManager
 		output, err := c.smClient.GetSecretValue(c.ctx, &secretsmanager.GetSecretValueInput{
 			SecretId: &name,
 		})
@@ -203,7 +209,7 @@ func (c *AWSMClient) getExistingSecret(name string, serviceType string) (string,
 	}
 }
 
-// mergeJSONValues merges new JSON values with existing ones
+// mergeJSONValues merges new JSON values with existing ones using maps.Copy
 func mergeJSONValues(existingValue, newValue string) (string, error) {
 	var existingValues, newValues map[string]interface{}
 
@@ -215,10 +221,8 @@ func mergeJSONValues(existingValue, newValue string) (string, error) {
 		return "", fmt.Errorf("failed to parse new values as JSON: %w", err)
 	}
 
-	// Merge new values into existing map
-	for k, v := range newValues {
-		existingValues[k] = v
-	}
+	// Using maps.Copy to merge new values into existing map
+	maps.Copy(existingValues, newValues)
 
 	// Convert back to JSON
 	mergedJSON, err := json.Marshal(existingValues)
@@ -257,7 +261,8 @@ func (c *AWSMClient) addSecret(args []string) error {
 	}
 
 	// Save to the appropriate service
-	if *opts.serviceType == serviceTypeParameterStore {
+	switch *opts.serviceType {
+	case serviceTypeParameterStore:
 		paramInput := &ssm.PutParameterInput{
 			Name:      opts.name,
 			Value:     &parsedValue,
@@ -274,9 +279,12 @@ func (c *AWSMClient) addSecret(args []string) error {
 			return fmt.Errorf("failed to save parameter: %w", err)
 		}
 
-		fmt.Printf("%s parameter '%s' saved successfully in Parameter Store\n",
-			map[bool]string{true: "JSON", false: ""}[isJSON], *opts.name)
-	} else {
+		jsonPrefix := ""
+		if isJSON {
+			jsonPrefix = "JSON "
+		}
+		fmt.Printf("%sparameter '%s' saved successfully in Parameter Store\n", jsonPrefix, *opts.name)
+	default: // serviceTypeSecretsManager
 		secretInput := &secretsmanager.CreateSecretInput{
 			Name:         opts.name,
 			SecretString: &parsedValue,
@@ -291,8 +299,11 @@ func (c *AWSMClient) addSecret(args []string) error {
 			return fmt.Errorf("failed to create secret: %w", err)
 		}
 
-		fmt.Printf("%s secret '%s' created successfully in Secrets Manager\n",
-			map[bool]string{true: "JSON", false: ""}[isJSON], *opts.name)
+		jsonPrefix := ""
+		if isJSON {
+			jsonPrefix = "JSON "
+		}
+		fmt.Printf("%ssecret '%s' created successfully in Secrets Manager\n", jsonPrefix, *opts.name)
 	}
 
 	return nil
@@ -334,7 +345,8 @@ func (c *AWSMClient) updateSecret(args []string) error {
 	}
 
 	// Update in the appropriate service
-	if *opts.serviceType == serviceTypeParameterStore {
+	switch *opts.serviceType {
+	case serviceTypeParameterStore:
 		paramInput := &ssm.PutParameterInput{
 			Name:      opts.name,
 			Value:     &parsedValue,
@@ -352,7 +364,7 @@ func (c *AWSMClient) updateSecret(args []string) error {
 		}
 
 		fmt.Printf("Parameter '%s' updated successfully in Parameter Store\n", *opts.name)
-	} else {
+	default: // serviceTypeSecretsManager
 		updateInput := &secretsmanager.UpdateSecretInput{
 			SecretId:     opts.name,
 			SecretString: &parsedValue,
@@ -383,7 +395,8 @@ func (c *AWSMClient) deleteSecret(args []string) error {
 		return fmt.Errorf("name is required")
 	}
 
-	if *opts.serviceType == serviceTypeParameterStore {
+	switch *opts.serviceType {
+	case serviceTypeParameterStore:
 		_, err := c.psClient.DeleteParameter(c.ctx, &ssm.DeleteParameterInput{
 			Name: opts.name,
 		})
@@ -394,7 +407,7 @@ func (c *AWSMClient) deleteSecret(args []string) error {
 			return fmt.Errorf("failed to delete parameter: %w", err)
 		}
 		fmt.Printf("Parameter '%s' deleted successfully from Parameter Store\n", *opts.name)
-	} else {
+	default: // serviceTypeSecretsManager
 		_, err := c.smClient.DeleteSecret(c.ctx, &secretsmanager.DeleteSecretInput{
 			SecretId: opts.name,
 		})
@@ -475,7 +488,8 @@ func (c *AWSMClient) getSecret(args []string) error {
 	}
 
 	// Output formatting
-	if *opts.format == "json" {
+	switch *opts.format {
+	case "json":
 		// Try to parse as JSON and pretty print
 		var jsonData interface{}
 		if err = json.Unmarshal([]byte(secretValue), &jsonData); err == nil {
@@ -488,7 +502,7 @@ func (c *AWSMClient) getSecret(args []string) error {
 			// Not JSON, just print as-is
 			fmt.Println(secretValue)
 		}
-	} else {
+	default:
 		// Raw format, just print as-is
 		fmt.Println(secretValue)
 	}
@@ -590,19 +604,20 @@ func main() {
 	command := os.Args[1]
 	args := os.Args[2:]
 
+	var cmdErr error
 	switch command {
 	case "add":
-		err = client.addSecret(args)
+		cmdErr = client.addSecret(args)
 	case "update":
-		err = client.updateSecret(args)
+		cmdErr = client.updateSecret(args)
 	case "delete":
-		err = client.deleteSecret(args)
+		cmdErr = client.deleteSecret(args)
 	case "list":
-		err = client.listSecrets(args)
+		cmdErr = client.listSecrets(args)
 	case "get":
-		err = client.getSecret(args)
+		cmdErr = client.getSecret(args)
 	case "run":
-		err = client.runWithSecrets(args)
+		cmdErr = client.runWithSecrets(args)
 	case "help":
 		printUsage()
 	default:
@@ -611,8 +626,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	if cmdErr != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", cmdErr)
 		os.Exit(1)
 	}
 }

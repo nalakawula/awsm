@@ -122,9 +122,9 @@ func parseValueAsJSON(value string) (string, bool, error) {
 	}
 
 	// Check if it's already valid JSON
-	var jsonObj interface{}
+	var jsonObj any
 	if err := json.Unmarshal([]byte(value), &jsonObj); err == nil {
-		if _, ok := jsonObj.(map[string]interface{}); ok {
+		if _, ok := jsonObj.(map[string]any); ok {
 			return value, true, nil
 		}
 	}
@@ -211,7 +211,7 @@ func (c *AWSMClient) getExistingSecret(name string, serviceType string) (string,
 
 // mergeJSONValues merges new JSON values with existing ones using maps.Copy
 func mergeJSONValues(existingValue, newValue string) (string, error) {
-	var existingValues, newValues map[string]interface{}
+	var existingValues, newValues map[string]any
 
 	if err := json.Unmarshal([]byte(existingValue), &existingValues); err != nil {
 		return newValue, nil // If existing value isn't valid JSON, just use new value
@@ -491,7 +491,7 @@ func (c *AWSMClient) getSecret(args []string) error {
 	switch *opts.format {
 	case "json":
 		// Try to parse as JSON and pretty print
-		var jsonData interface{}
+		var jsonData any
 		if err = json.Unmarshal([]byte(secretValue), &jsonData); err == nil {
 			prettyJSON, err := json.MarshalIndent(jsonData, "", "  ")
 			if err != nil {

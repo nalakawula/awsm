@@ -10,10 +10,9 @@ A command-line tool for managing AWS Secrets and injecting them as environment v
 - Validation for AWS service limits (4KB for Parameter Store, 64KB for Secrets Manager)
 - Smart handling of JSON secrets with automatic merging of existing values during updates
 - Support for multiple input formats:
-  - Plain text values
   - JSON objects
   - Key-value pairs (key1=value1,key2=value2)
-  - File contents (JSON orn .env using @file syntax)
+  - File contents (JSON or .env using @file syntax)
 
 ## Use Case
 
@@ -33,22 +32,30 @@ go install github.com/nalakawula/awsm@latest
 AWS Secret Manager Tool (awsm)
 
 Usage:
-  awsm add [-type sm|ps] -name NAME -value VALUE    Add a new secret
-  awsm update [-type sm|ps] -name NAME -value VALUE Update an existing secret
-  awsm delete [-type sm|ps] -name NAME              Delete a secret
-  awsm get [-type sm|ps] -name NAME [-format json|raw] Get a secret's value
-  awsm list [-type sm|ps]                           List all secrets
-  awsm run [-type sm|ps] -name NAME -- COMMAND [ARGS...]    Run a command with secrets as env vars
-  awsm help                                         Show this help message
+  awsm add    [-type sm|ps] -name NAME -value VALUE [-desc DESCRIPTION]    Add a new secret
+  awsm update [-type sm|ps] -name NAME -value VALUE [-desc DESCRIPTION]    Update an existing secret
+  awsm delete [-type sm|ps] -name NAME                                     Delete a secret
+  awsm list   [-type sm|ps]                                                List all secrets
+  awsm get    [-type sm|ps] -name NAME [-format json|raw]                  Get a secret's value
+  awsm run    [-type sm|ps] -name NAME -- COMMAND [ARGS...]                Run a command with secrets as env vars
+  awsm help                                                                Show this help message
 
 Options:
   -type    Service type: sm (Secrets Manager, default) or ps (Parameter Store)
   -name    Secret name
-  -value   Secret value (string, JSON, key-value pairs like "key1=val1,key2=val2", or @file to read from file)
+  -value   Secret value (JSON, key=value format, or a file with @/path/to/file containing JSON or .env)
+           All values are stored as JSON objects
   -format  Output format for get command: json (default, pretty-prints JSON) or raw (plain text)
-  
+  -desc    Description for the secret or parameter (optional)
+
 Notes:
-  - When updating JSON secrets, existing keys will be updated and new keys will be appended automatically
+  - All secrets are stored as JSON.
+  - When updating, existing JSON keys will be preserved and new keys will be added or updated
+  - When using the run command, each key in the JSON becomes an environment variable
+
+Limitations:
+  - Parameter Store: 4KB size limit
+  - Secrets Manager: 64KB size limit
 ```
 
 ## Examples
@@ -75,6 +82,12 @@ awsm add -name my-app/config -value "db_host=localhost,db_port=5432,db_name=myap
 
 ```bash
 awsm add -name my-app/credentials -value @/path/to/credentials.json
+```
+
+### Add a secret with description
+
+```bash
+awsm add -name my-app/auth -value '{"api_key":"abc123"}' -desc "Authentication credentials"
 ```
 
 ### Update an existing JSON secret (merges with existing values)

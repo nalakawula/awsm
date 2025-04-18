@@ -710,13 +710,13 @@ Usage:
 Options:
   -type    Service type: sm (Secrets Manager, default) or ps (Parameter Store)
   -name    Secret name
-  -value   Secret value (string, JSON, key-value pairs like "key1=val1,key2=val2", or @file to read from file)
+  -value   Secret value (JSON, key=value format, or a file with @/path/to/file containing JSON or .env)
            All values are stored as JSON objects
   -format  Output format for get command: json (default, pretty-prints JSON) or raw (plain text)
   -desc    Description for the secret or parameter (optional)
 
 Notes:
-  - All secrets are stored as JSON. Single string values are stored as {"value": "the-string-value"}
+  - All secrets are stored as JSON.
   - When updating, existing JSON keys will be preserved and new keys will be added or updated
   - When using the run command, each key in the JSON becomes an environment variable
 `)

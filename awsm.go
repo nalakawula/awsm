@@ -56,7 +56,6 @@ type SecretData struct {
 	Value       string // The actual secret value
 	Description string // Optional description of the secret
 	ServiceType string // Which AWS service this secret belongs to (sm or ps)
-	IsJSON      bool   // Whether the value is in JSON format
 }
 
 // commandOptions defines the common command line options for all commands
@@ -175,65 +174,68 @@ func isValidEnvFile(filename string) (map[string]string, bool, error) {
 }
 
 // isValidJSONFile checks if a file contains valid JSON
-func isValidJSONFile(filename string) (string, bool, error) {
+func isValidJSONFile(filename string) (map[string]any, bool, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to read file %s: %w", filename, err)
+		return nil, false, fmt.Errorf("failed to read file %s: %w", filename, err)
 	}
 
 	content := strings.TrimSpace(string(data))
 
 	// Check if it's valid JSON
-	var jsonObj interface{}
+	var jsonObj map[string]any
 	err = json.Unmarshal([]byte(content), &jsonObj)
 
-	return content, err == nil, nil
+	return jsonObj, err == nil, nil
 }
 
-// parseValueAsJSON tries to parse the input value as JSON or as key=value pairs
-// Returns the parsed value, a boolean indicating if it's JSON, and any error
-// Values starting with @ are treated as filenames containing either valid JSON or .env format
-func parseValueAsJSON(value string) (string, bool, error) {
+// parseValueToJSON converts input value to a JSON object
+// Accepts three input types:
+// 1. Valid JSON object
+// 2. Files prefixed with @ containing either JSON or .env format
+// 3. Simple key=value or key=value,key2=value2 format
+func parseValueToJSON(value string) (string, error) {
 	// Check if we need to read from file (value starts with @)
 	if strings.HasPrefix(value, "@") {
 		filename := strings.TrimPrefix(value, "@")
 
-		// First try parsing as .env file
+		// Try parsing as .env file
 		envMap, isEnv, err := isValidEnvFile(filename)
 		if err != nil {
-			return "", false, fmt.Errorf("error reading file: %w", err)
+			return "", fmt.Errorf("error reading file: %w", err)
 		}
 
 		if isEnv {
 			// Convert to JSON
 			jsonBytes, err := json.Marshal(envMap)
 			if err != nil {
-				return "", false, fmt.Errorf("failed to convert env file to JSON: %w", err)
+				return "", fmt.Errorf("failed to convert env file to JSON: %w", err)
 			}
-
-			return string(jsonBytes), true, nil
+			return string(jsonBytes), nil
 		}
 
 		// Try parsing as JSON file
-		content, isJSON, err := isValidJSONFile(filename)
+		jsonMap, isJSON, err := isValidJSONFile(filename)
 		if err != nil {
-			return "", false, fmt.Errorf("error reading file: %w", err)
+			return "", fmt.Errorf("error reading file: %w", err)
 		}
 
 		if isJSON {
-			return content, true, nil
+			jsonBytes, err := json.Marshal(jsonMap)
+			if err != nil {
+				return "", fmt.Errorf("failed to convert JSON file to string: %w", err)
+			}
+			return string(jsonBytes), nil
 		}
 
 		// Not a valid .env or JSON file
-		return "", false, fmt.Errorf("file must contain either valid JSON or key=value pairs in .env format")
+		return "", fmt.Errorf("file '%s' is neither valid JSON nor .env format", filename)
 	}
 
-	// Check if it's already valid JSON
-	var jsonObj any
+	// Check if it's already valid JSON object
+	var jsonObj map[string]any
 	if err := json.Unmarshal([]byte(value), &jsonObj); err == nil {
-		if _, ok := jsonObj.(map[string]any); ok {
-			return value, true, nil
-		}
+		return value, nil
 	}
 
 	// Parse key=value format
@@ -252,7 +254,7 @@ func parseValueAsJSON(value string) (string, bool, error) {
 				if len(parts) == 2 && parts[0] != "" {
 					jsonMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 				} else {
-					fmt.Fprintf(os.Stderr, "Warning: Ignoring invalid key-value pair: %s\n", pair)
+					return "", fmt.Errorf("invalid key-value pair: %s", pair)
 				}
 			}
 		} else {
@@ -260,19 +262,22 @@ func parseValueAsJSON(value string) (string, bool, error) {
 			parts := strings.SplitN(value, "=", 2)
 			if len(parts) == 2 && parts[0] != "" {
 				jsonMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+			} else {
+				return "", fmt.Errorf("invalid key-value format: %s", value)
 			}
 		}
 
 		if len(jsonMap) > 0 {
 			jsonBytes, err := json.Marshal(jsonMap)
-			if err == nil {
-				return string(jsonBytes), true, nil
+			if err != nil {
+				return "", fmt.Errorf("failed to convert key-value pairs to JSON: %w", err)
 			}
+			return string(jsonBytes), nil
 		}
 	}
 
-	// Not JSON, return original
-	return value, false, nil
+	// Not acceptable format
+	return "", fmt.Errorf("value must be valid JSON, key=value format, or a file with @prefix containing JSON or .env")
 }
 
 // validateSize checks if the value size is within the limits for the given service type
@@ -344,7 +349,7 @@ func mergeJSONValues(existingValue, newValue string) (string, error) {
 }
 
 // addSecret creates a new secret in either Secrets Manager or Parameter Store
-// Parses the value as JSON or key=value pairs if possible
+// Always stores the value as JSON
 func (c *AWSMClient) addSecret(args []string) error {
 	opts, _, err := parseCommonFlags("add", args)
 	if err != nil {
@@ -355,14 +360,14 @@ func (c *AWSMClient) addSecret(args []string) error {
 		return fmt.Errorf("name and value are required")
 	}
 
-	// Parse and validate the value
-	parsedValue, isJSON, err := parseValueAsJSON(*opts.value)
+	// Parse the value to JSON format
+	jsonValue, err := parseValueToJSON(*opts.value)
 	if err != nil {
 		return err
 	}
 
 	// Validate size
-	if err := validateSize(parsedValue, *opts.serviceType); err != nil {
+	if err := validateSize(jsonValue, *opts.serviceType); err != nil {
 		return err
 	}
 
@@ -377,7 +382,7 @@ func (c *AWSMClient) addSecret(args []string) error {
 	case serviceTypeParameterStore:
 		paramInput := &ssm.PutParameterInput{
 			Name:      opts.name,
-			Value:     &parsedValue,
+			Value:     &jsonValue,
 			Type:      ssmtypes.ParameterTypeSecureString, // Always use secure string for secrets
 			Overwrite: aws.Bool(false),                    // Don't overwrite existing parameters
 		}
@@ -391,15 +396,11 @@ func (c *AWSMClient) addSecret(args []string) error {
 			return fmt.Errorf("failed to save parameter: %w", err)
 		}
 
-		jsonPrefix := ""
-		if isJSON {
-			jsonPrefix = "JSON "
-		}
-		fmt.Printf("%sparameter '%s' saved successfully in Parameter Store\n", jsonPrefix, *opts.name)
+		fmt.Printf("JSON parameter '%s' saved successfully in Parameter Store\n", *opts.name)
 	default: // serviceTypeSecretsManager
 		secretInput := &secretsmanager.CreateSecretInput{
 			Name:         opts.name,
-			SecretString: &parsedValue,
+			SecretString: &jsonValue,
 		}
 
 		if *opts.description != "" {
@@ -411,18 +412,14 @@ func (c *AWSMClient) addSecret(args []string) error {
 			return fmt.Errorf("failed to create secret: %w", err)
 		}
 
-		jsonPrefix := ""
-		if isJSON {
-			jsonPrefix = "JSON "
-		}
-		fmt.Printf("%ssecret '%s' created successfully in Secrets Manager\n", jsonPrefix, *opts.name)
+		fmt.Printf("JSON secret '%s' created successfully in Secrets Manager\n", *opts.name)
 	}
 
 	return nil
 }
 
 // updateSecret updates an existing secret in either Secrets Manager or Parameter Store
-// For JSON values, it merges the new values with existing ones
+// Always merges with existing JSON values
 func (c *AWSMClient) updateSecret(args []string) error {
 	opts, _, err := parseCommonFlags("update", args)
 	if err != nil {
@@ -433,8 +430,8 @@ func (c *AWSMClient) updateSecret(args []string) error {
 		return fmt.Errorf("name and value are required")
 	}
 
-	// Parse the input value
-	parsedValue, isJSON, err := parseValueAsJSON(*opts.value)
+	// Parse the input value to JSON
+	jsonValue, err := parseValueToJSON(*opts.value)
 	if err != nil {
 		return err
 	}
@@ -448,16 +445,14 @@ func (c *AWSMClient) updateSecret(args []string) error {
 		return fmt.Errorf("secret/parameter '%s' does not exist", *opts.name)
 	}
 
-	// For JSON values, attempt to merge them
-	if isJSON {
-		parsedValue, err = mergeJSONValues(existingValue, parsedValue)
-		if err != nil {
-			return err
-		}
+	// Always try to merge the JSON values
+	jsonValue, err = mergeJSONValues(existingValue, jsonValue)
+	if err != nil {
+		return err
 	}
 
 	// Validate size
-	if err := validateSize(parsedValue, *opts.serviceType); err != nil {
+	if err := validateSize(jsonValue, *opts.serviceType); err != nil {
 		return err
 	}
 
@@ -466,7 +461,7 @@ func (c *AWSMClient) updateSecret(args []string) error {
 	case serviceTypeParameterStore:
 		paramInput := &ssm.PutParameterInput{
 			Name:      opts.name,
-			Value:     &parsedValue,
+			Value:     &jsonValue,
 			Type:      ssmtypes.ParameterTypeSecureString,
 			Overwrite: aws.Bool(true), // Overwrite the existing parameter
 		}
@@ -480,11 +475,11 @@ func (c *AWSMClient) updateSecret(args []string) error {
 			return fmt.Errorf("failed to update parameter: %w", err)
 		}
 
-		fmt.Printf("Parameter '%s' updated successfully in Parameter Store\n", *opts.name)
+		fmt.Printf("JSON parameter '%s' updated successfully in Parameter Store\n", *opts.name)
 	default: // serviceTypeSecretsManager
 		updateInput := &secretsmanager.UpdateSecretInput{
 			SecretId:     opts.name,
-			SecretString: &parsedValue,
+			SecretString: &jsonValue,
 		}
 
 		if *opts.description != "" {
@@ -496,7 +491,7 @@ func (c *AWSMClient) updateSecret(args []string) error {
 			return fmt.Errorf("failed to update secret: %w", err)
 		}
 
-		fmt.Printf("Secret '%s' updated successfully in Secrets Manager\n", *opts.name)
+		fmt.Printf("JSON secret '%s' updated successfully in Secrets Manager\n", *opts.name)
 	}
 
 	return nil
@@ -623,7 +618,7 @@ func (c *AWSMClient) getSecret(args []string) error {
 			}
 			fmt.Println(string(prettyJSON))
 		} else {
-			// Not JSON, just print as-is
+			// Not JSON, just print as-is (shouldn't happen with our refactoring)
 			fmt.Println(secretValue)
 		}
 	default:
@@ -636,7 +631,6 @@ func (c *AWSMClient) getSecret(args []string) error {
 
 // runWithSecrets executes a command with secrets loaded as environment variables
 // For JSON secrets, each key becomes an environment variable
-// For plain text secrets, the secret name is used as the variable name
 func (c *AWSMClient) runWithSecrets(args []string) error {
 	opts, cmdArgs, err := parseCommonFlags("run", args)
 	if err != nil {
@@ -662,24 +656,32 @@ func (c *AWSMClient) runWithSecrets(args []string) error {
 	// Prepare environment for the command
 	env := os.Environ()
 
-	// Check if the secret is JSON
-	var secretValues map[string]string
-	isJSON := json.Unmarshal([]byte(secretValue), &secretValues) == nil
+	// Parse the JSON secret
+	var secretValues map[string]any
+	if err := json.Unmarshal([]byte(secretValue), &secretValues); err != nil {
+		return fmt.Errorf("failed to parse secret value as JSON: %w", err)
+	}
 
-	if isJSON {
-		// For JSON secrets, set each key as an environment variable
-		for k, v := range secretValues {
-			env = append(env, fmt.Sprintf("%s=%s", strings.ToUpper(k), v))
+	// Set each key as an environment variable
+	for k, v := range secretValues {
+		// Convert the value to string
+		var strValue string
+		switch val := v.(type) {
+		case string:
+			strValue = val
+		case float64:
+			strValue = fmt.Sprintf("%g", val)
+		case bool:
+			strValue = fmt.Sprintf("%t", val)
+		default:
+			// For complex objects, convert back to JSON
+			bytes, err := json.Marshal(val)
+			if err != nil {
+				return fmt.Errorf("failed to convert value to string: %w", err)
+			}
+			strValue = string(bytes)
 		}
-	} else {
-		// For non-JSON secrets, use the secret name as the variable name
-		// Transforms paths like "/aws/service/name" to "SERVICE_NAME"
-		varName := strings.ToUpper(strings.Replace(
-			strings.TrimPrefix(
-				strings.TrimPrefix(*opts.name, "/"),
-				"aws/"),
-			"/", "_", -1))
-		env = append(env, fmt.Sprintf("%s=%s", varName, secretValue))
+		env = append(env, fmt.Sprintf("%s=%s", strings.ToUpper(k), strValue))
 	}
 
 	// Execute the command with the enhanced environment
@@ -709,11 +711,14 @@ Options:
   -type    Service type: sm (Secrets Manager, default) or ps (Parameter Store)
   -name    Secret name
   -value   Secret value (string, JSON, key-value pairs like "key1=val1,key2=val2", or @file to read from file)
+           All values are stored as JSON objects
   -format  Output format for get command: json (default, pretty-prints JSON) or raw (plain text)
   -desc    Description for the secret or parameter (optional)
 
 Notes:
-  - When updating JSON secrets, existing keys will be updated and new keys will be appended automatically
+  - All secrets are stored as JSON. Single string values are stored as {"value": "the-string-value"}
+  - When updating, existing JSON keys will be preserved and new keys will be added or updated
+  - When using the run command, each key in the JSON becomes an environment variable
 `)
 }
 

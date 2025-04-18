@@ -441,6 +441,9 @@ func (c *AWSMClient) updateSecret(args []string) error {
 
 	// Get existing secret if it exists
 	existingValue, exists, err := c.getExistingSecret(*opts.name, *opts.serviceType)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve existing secret: %w", err)
+	}
 	if !exists {
 		return fmt.Errorf("secret/parameter '%s' does not exist", *opts.name)
 	}

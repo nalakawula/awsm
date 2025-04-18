@@ -1,3 +1,4 @@
+// Package main provides a CLI tool for managing secrets in AWS Secrets Manager and Parameter Store
 package main
 
 import (
@@ -19,22 +20,22 @@ import (
 
 const (
 	// Size limits for AWS services
-	parameterStoreSizeLimit = 4 * 1024  // 4KB
-	secretManagerSizeLimit  = 64 * 1024 // 64KB
+	parameterStoreSizeLimit = 4 * 1024  // 4KB maximum size for Parameter Store values
+	secretManagerSizeLimit  = 64 * 1024 // 64KB maximum size for Secrets Manager values
 
 	// Service types
-	serviceTypeSecretsManager = "sm"
-	serviceTypeParameterStore = "ps"
+	serviceTypeSecretsManager = "sm" // Short identifier for Secrets Manager
+	serviceTypeParameterStore = "ps" // Short identifier for Parameter Store
 )
 
-// AWSMClient handles interactions with both Secrets Manager and Parameter Store
+// AWSMClient handles interactions with both Secrets Manager and Parameter Store services
 type AWSMClient struct {
-	smClient *secretsmanager.Client
-	psClient *ssm.Client
-	ctx      context.Context
+	smClient *secretsmanager.Client // AWS Secrets Manager client
+	psClient *ssm.Client            // AWS Systems Manager Parameter Store client
+	ctx      context.Context        // Context for AWS API calls
 }
 
-// newAWSMClient creates and initializes a new AWSMClient
+// newAWSMClient creates and initializes a new AWSMClient with AWS SDK configuration
 func newAWSMClient(ctx context.Context) (*AWSMClient, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
@@ -50,23 +51,26 @@ func newAWSMClient(ctx context.Context) (*AWSMClient, error) {
 
 // SecretData represents the common structure for a secret's content and metadata
 type SecretData struct {
-	Name        string
-	Value       string
-	Description string
-	ServiceType string
-	IsJSON      bool
+	Name        string // The name/identifier of the secret
+	Value       string // The actual secret value
+	Description string // Optional description of the secret
+	ServiceType string // Which AWS service this secret belongs to (sm or ps)
+	IsJSON      bool   // Whether the value is in JSON format
 }
 
-// commandOptions defines the common command line options
+// commandOptions defines the common command line options for all commands
 type commandOptions struct {
-	serviceType *string
-	name        *string
-	value       *string
-	description *string
-	format      *string
-	flagSet     *flag.FlagSet
+	serviceType *string       // Which service to use (sm or ps)
+	name        *string       // Name of the secret
+	value       *string       // Value of the secret (for add/update)
+	description *string       // Description for the secret (optional)
+	format      *string       // Output format for get command
+	flagSet     *flag.FlagSet // FlagSet for parsing command line arguments
 }
 
+// parseCommonFlags sets up and parses common command line flags based on the command
+// It returns the parsed options, any remaining arguments (after -- for run command),
+// and any error that occurred during parsing
 func parseCommonFlags(cmd string, args []string) (*commandOptions, []string, error) {
 	opts := &commandOptions{
 		flagSet: flag.NewFlagSet(cmd, flag.ExitOnError),
@@ -95,11 +99,13 @@ func parseCommonFlags(cmd string, args []string) (*commandOptions, []string, err
 
 	var cmdArgs []string
 	if cmdIndex != -1 {
+		// Split the args at the -- separator
 		cmdArgs = args[cmdIndex+1:]
 		if err := opts.flagSet.Parse(args[:cmdIndex]); err != nil {
 			return nil, nil, err
 		}
 	} else {
+		// No separator found, parse all args as flags
 		if err := opts.flagSet.Parse(args); err != nil {
 			return nil, nil, err
 		}
@@ -110,6 +116,8 @@ func parseCommonFlags(cmd string, args []string) (*commandOptions, []string, err
 }
 
 // parseValueAsJSON tries to parse the input value as JSON or as key=value pairs
+// Returns the parsed value, a boolean indicating if it's JSON, and any error
+// Values starting with @ are treated as filenames to read from
 func parseValueAsJSON(value string) (string, bool, error) {
 	// Check if we need to read from file (value starts with @)
 	if strings.HasPrefix(value, "@") {
@@ -133,7 +141,7 @@ func parseValueAsJSON(value string) (string, bool, error) {
 	if strings.Contains(value, "=") {
 		jsonMap := make(map[string]string)
 
-		// Handle multiple key=value pairs
+		// Handle multiple key=value pairs separated by commas
 		if strings.Contains(value, ",") {
 			for _, pair := range strings.Split(value, ",") {
 				pair = strings.TrimSpace(pair)
@@ -169,6 +177,7 @@ func parseValueAsJSON(value string) (string, bool, error) {
 }
 
 // validateSize checks if the value size is within the limits for the given service type
+// Returns an error if the value exceeds size limits for the specified service
 func validateSize(value string, serviceType string) error {
 	valueSize := len([]byte(value))
 
@@ -187,12 +196,13 @@ func validateSize(value string, serviceType string) error {
 }
 
 // getExistingSecret retrieves an existing secret from either Secrets Manager or Parameter Store
+// Returns the secret value, a boolean indicating if it exists, and any error
 func (c *AWSMClient) getExistingSecret(name string, serviceType string) (string, bool, error) {
 	switch serviceType {
 	case serviceTypeParameterStore:
 		output, err := c.psClient.GetParameter(c.ctx, &ssm.GetParameterInput{
 			Name:           &name,
-			WithDecryption: aws.Bool(true),
+			WithDecryption: aws.Bool(true), // Always decrypt secure strings
 		})
 		if err != nil {
 			return "", false, err
@@ -209,7 +219,8 @@ func (c *AWSMClient) getExistingSecret(name string, serviceType string) (string,
 	}
 }
 
-// mergeJSONValues merges new JSON values with existing ones using maps.Copy
+// mergeJSONValues merges new JSON values with existing ones
+// Preserves existing keys that aren't in the new values, and updates those that are
 func mergeJSONValues(existingValue, newValue string) (string, error) {
 	var existingValues, newValues map[string]any
 
@@ -233,6 +244,8 @@ func mergeJSONValues(existingValue, newValue string) (string, error) {
 	return string(mergedJSON), nil
 }
 
+// addSecret creates a new secret in either Secrets Manager or Parameter Store
+// Parses the value as JSON or key=value pairs if possible
 func (c *AWSMClient) addSecret(args []string) error {
 	opts, _, err := parseCommonFlags("add", args)
 	if err != nil {
@@ -266,8 +279,8 @@ func (c *AWSMClient) addSecret(args []string) error {
 		paramInput := &ssm.PutParameterInput{
 			Name:      opts.name,
 			Value:     &parsedValue,
-			Type:      ssmtypes.ParameterTypeSecureString,
-			Overwrite: aws.Bool(false),
+			Type:      ssmtypes.ParameterTypeSecureString, // Always use secure string for secrets
+			Overwrite: aws.Bool(false),                    // Don't overwrite existing parameters
 		}
 
 		if *opts.description != "" {
@@ -309,6 +322,8 @@ func (c *AWSMClient) addSecret(args []string) error {
 	return nil
 }
 
+// updateSecret updates an existing secret in either Secrets Manager or Parameter Store
+// For JSON values, it merges the new values with existing ones
 func (c *AWSMClient) updateSecret(args []string) error {
 	opts, _, err := parseCommonFlags("update", args)
 	if err != nil {
@@ -351,7 +366,7 @@ func (c *AWSMClient) updateSecret(args []string) error {
 			Name:      opts.name,
 			Value:     &parsedValue,
 			Type:      ssmtypes.ParameterTypeSecureString,
-			Overwrite: aws.Bool(true),
+			Overwrite: aws.Bool(true), // Overwrite the existing parameter
 		}
 
 		if *opts.description != "" {
@@ -385,6 +400,7 @@ func (c *AWSMClient) updateSecret(args []string) error {
 	return nil
 }
 
+// deleteSecret removes a secret from either Secrets Manager or Parameter Store
 func (c *AWSMClient) deleteSecret(args []string) error {
 	opts, _, err := parseCommonFlags("delete", args)
 	if err != nil {
@@ -423,12 +439,15 @@ func (c *AWSMClient) deleteSecret(args []string) error {
 	return nil
 }
 
+// listSecrets lists all secrets in Secrets Manager and/or Parameter Store
+// If a service type is specified, only lists secrets from that service
 func (c *AWSMClient) listSecrets(args []string) error {
 	opts, _, err := parseCommonFlags("list", args)
 	if err != nil {
 		return err
 	}
 
+	// List Parameter Store secrets if requested
 	if *opts.serviceType == serviceTypeParameterStore || *opts.serviceType == "" {
 		fmt.Println("Parameter Store secrets:")
 		params, err := c.psClient.DescribeParameters(c.ctx, &ssm.DescribeParametersInput{
@@ -436,7 +455,7 @@ func (c *AWSMClient) listSecrets(args []string) error {
 				{
 					Key:    aws.String("Type"),
 					Option: aws.String("Equals"),
-					Values: []string{"SecureString"},
+					Values: []string{"SecureString"}, // Only show secure strings (secrets)
 				},
 			},
 		})
@@ -450,6 +469,7 @@ func (c *AWSMClient) listSecrets(args []string) error {
 		fmt.Println()
 	}
 
+	// List Secrets Manager secrets if requested
 	if *opts.serviceType == serviceTypeSecretsManager || *opts.serviceType == "" {
 		fmt.Println("Secrets Manager secrets:")
 		secrets, err := c.smClient.ListSecrets(c.ctx, &secretsmanager.ListSecretsInput{})
@@ -465,6 +485,8 @@ func (c *AWSMClient) listSecrets(args []string) error {
 	return nil
 }
 
+// getSecret retrieves and displays a secret's value from either service
+// Can display in raw or pretty-printed JSON format
 func (c *AWSMClient) getSecret(args []string) error {
 	opts, _, err := parseCommonFlags("get", args)
 	if err != nil {
@@ -510,6 +532,9 @@ func (c *AWSMClient) getSecret(args []string) error {
 	return nil
 }
 
+// runWithSecrets executes a command with secrets loaded as environment variables
+// For JSON secrets, each key becomes an environment variable
+// For plain text secrets, the secret name is used as the variable name
 func (c *AWSMClient) runWithSecrets(args []string) error {
 	opts, cmdArgs, err := parseCommonFlags("run", args)
 	if err != nil {
@@ -546,6 +571,7 @@ func (c *AWSMClient) runWithSecrets(args []string) error {
 		}
 	} else {
 		// For non-JSON secrets, use the secret name as the variable name
+		// Transforms paths like "/aws/service/name" to "SERVICE_NAME"
 		varName := strings.ToUpper(strings.Replace(
 			strings.TrimPrefix(
 				strings.TrimPrefix(*opts.name, "/"),
@@ -554,7 +580,7 @@ func (c *AWSMClient) runWithSecrets(args []string) error {
 		env = append(env, fmt.Sprintf("%s=%s", varName, secretValue))
 	}
 
-	// Execute the command
+	// Execute the command with the enhanced environment
 	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
@@ -564,6 +590,7 @@ func (c *AWSMClient) runWithSecrets(args []string) error {
 	return cmd.Run()
 }
 
+// printUsage displays detailed help information for all commands
 func printUsage() {
 	fmt.Print(`AWS Secret Manager Tool (awsm)
 
@@ -588,6 +615,7 @@ Notes:
 `)
 }
 
+// main is the entry point for the CLI application
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -602,7 +630,7 @@ func main() {
 	}
 
 	command := os.Args[1]
-	args := os.Args[2:]
+	args := os.Args[2:] // All arguments after the command
 
 	var cmdErr error
 	switch command {

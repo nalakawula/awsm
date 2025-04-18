@@ -699,13 +699,13 @@ func printUsage() {
 	fmt.Print(`AWS Secret Manager Tool (awsm)
 
 Usage:
-  awsm add [-type sm|ps] -name NAME -value VALUE [-desc DESCRIPTION]    Add a new secret
-  awsm update [-type sm|ps] -name NAME -value VALUE [-desc DESCRIPTION] Update an existing secret
-  awsm delete [-type sm|ps] -name NAME                                  Delete a secret
-  awsm get [-type sm|ps] -name NAME [-format json|raw]                  Get a secret's value
-  awsm list [-type sm|ps]                                               List all secrets
-  awsm run [-type sm|ps] -name NAME -- COMMAND [ARGS...]                Run a command with secrets as env vars
-  awsm help                                                             Show this help message
+  awsm add    [-type sm|ps] -name NAME -value VALUE [-desc DESCRIPTION]    Add a new secret
+  awsm update [-type sm|ps] -name NAME -value VALUE [-desc DESCRIPTION]    Update an existing secret
+  awsm delete [-type sm|ps] -name NAME                                     Delete a secret
+  awsm list   [-type sm|ps]                                                List all secrets
+  awsm get    [-type sm|ps] -name NAME [-format json|raw]                  Get a secret's value
+  awsm run    [-type sm|ps] -name NAME -- COMMAND [ARGS...]                Run a command with secrets as env vars
+  awsm help                                                                Show this help message
 
 Options:
   -type    Service type: sm (Secrets Manager, default) or ps (Parameter Store)
@@ -719,6 +719,10 @@ Notes:
   - All secrets are stored as JSON.
   - When updating, existing JSON keys will be preserved and new keys will be added or updated
   - When using the run command, each key in the JSON becomes an environment variable
+
+Limitations:
+  - Parameter Store: 4KB size limit
+  - Secrets Manager: 64KB size limit
 `)
 }
 

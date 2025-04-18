@@ -17,7 +17,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.20"
+          go-version: "1.23"
           cache: true
 
       - name: Get version from tag
@@ -29,19 +29,19 @@ jobs:
           mkdir -p dist
 
           # Build for Linux (amd64)
-          GOOS=linux GOARCH=amd64 go build -ldflags="-X main.version=${{ steps.get_version.outputs.VERSION }}" -o dist/awsm-linux-amd64 ./awsm.go
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o dist/awsm-linux-amd64 ./awsm.go
 
           # Build for Linux (arm64)
-          GOOS=linux GOARCH=arm64 go build -ldflags="-X main.version=${{ steps.get_version.outputs.VERSION }}" -o dist/awsm-linux-arm64 ./awsm.go
+          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o dist/awsm-linux-arm64 ./awsm.go
 
           # Build for macOS (amd64)
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-X main.version=${{ steps.get_version.outputs.VERSION }}" -o dist/awsm-darwin-amd64 ./awsm.go
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o dist/awsm-darwin-amd64 ./awsm.go
 
           # Build for macOS (arm64)
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-X main.version=${{ steps.get_version.outputs.VERSION }}" -o dist/awsm-darwin-arm64 ./awsm.go
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o dist/awsm-darwin-arm64 ./awsm.go
 
           # Build for Windows
-          GOOS=windows GOARCH=amd64 go build -ldflags="-X main.version=${{ steps.get_version.outputs.VERSION }}" -o dist/awsm-windows-amd64.exe ./awsm.go
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -X main.version=${{ steps.get_version.outputs.VERSION }}" -o dist/awsm-windows-amd64.exe ./awsm.go
 
       - name: Create archives
         run: |

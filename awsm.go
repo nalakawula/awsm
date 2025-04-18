@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -115,18 +116,116 @@ func parseCommonFlags(cmd string, args []string) (*commandOptions, []string, err
 	return opts, cmdArgs, nil
 }
 
+// parseEnvFile parses an environment file (.env format) into a map of key-value pairs
+// Each line should be in the format KEY=VALUE, with # for comments
+func parseEnvFile(filename string) (map[string]string, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open env file %s: %w", filename, err)
+	}
+	defer file.Close()
+
+	envMap := make(map[string]string)
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Split at the first equals sign
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue // Skip invalid lines
+		}
+
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+
+		// Remove quotes if present
+		if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
+			(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+			value = value[1 : len(value)-1]
+		}
+
+		if key != "" {
+			envMap[key] = value
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading env file: %w", err)
+	}
+
+	return envMap, nil
+}
+
+// isValidEnvFile checks if a file is a valid environment file (.env format)
+func isValidEnvFile(filename string) (map[string]string, bool, error) {
+	envMap, err := parseEnvFile(filename)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// If we found valid key-value pairs, consider it a valid .env file
+	return envMap, len(envMap) > 0, nil
+}
+
+// isValidJSONFile checks if a file contains valid JSON
+func isValidJSONFile(filename string) (string, bool, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to read file %s: %w", filename, err)
+	}
+
+	content := strings.TrimSpace(string(data))
+
+	// Check if it's valid JSON
+	var jsonObj interface{}
+	err = json.Unmarshal([]byte(content), &jsonObj)
+
+	return content, err == nil, nil
+}
+
 // parseValueAsJSON tries to parse the input value as JSON or as key=value pairs
 // Returns the parsed value, a boolean indicating if it's JSON, and any error
-// Values starting with @ are treated as filenames to read from
+// Values starting with @ are treated as filenames containing either valid JSON or .env format
 func parseValueAsJSON(value string) (string, bool, error) {
 	// Check if we need to read from file (value starts with @)
 	if strings.HasPrefix(value, "@") {
 		filename := strings.TrimPrefix(value, "@")
-		data, err := os.ReadFile(filename)
+
+		// First try parsing as .env file
+		envMap, isEnv, err := isValidEnvFile(filename)
 		if err != nil {
-			return "", false, fmt.Errorf("failed to read file %s: %w", filename, err)
+			return "", false, fmt.Errorf("error reading file: %w", err)
 		}
-		value = strings.TrimSpace(string(data))
+
+		if isEnv {
+			// Convert to JSON
+			jsonBytes, err := json.Marshal(envMap)
+			if err != nil {
+				return "", false, fmt.Errorf("failed to convert env file to JSON: %w", err)
+			}
+
+			return string(jsonBytes), true, nil
+		}
+
+		// Try parsing as JSON file
+		content, isJSON, err := isValidJSONFile(filename)
+		if err != nil {
+			return "", false, fmt.Errorf("error reading file: %w", err)
+		}
+
+		if isJSON {
+			return content, true, nil
+		}
+
+		// Not a valid .env or JSON file
+		return "", false, fmt.Errorf("file must contain either valid JSON or key=value pairs in .env format")
 	}
 
 	// Check if it's already valid JSON
